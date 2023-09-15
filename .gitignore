@@ -1,4 +1,4 @@
 .DS_Store
-images
-Chapter5_CV_A_Modern_Approach.pdf
-CV1_environment.yaml
+lab1/images
+*.pdf
+*.yaml
