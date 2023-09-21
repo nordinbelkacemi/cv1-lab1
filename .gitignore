@@ -2,3 +2,5 @@
 lab1/images
 *.pdf
 *.yaml
+lab2/sample_data
+*/.ipynb_checkpoints
