@@ -4,5 +4,5 @@ lab1/images
 *.yaml
 lab2/sample_data
 */.ipynb_checkpoints
-lab3/data
+*/data
 *.avi
