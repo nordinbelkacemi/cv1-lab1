@@ -6,3 +6,4 @@ lab2/sample_data
 */.ipynb_checkpoints
 lab3/data
 *.avi
+*/__pycache__
