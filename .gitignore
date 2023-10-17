@@ -8,3 +8,4 @@ lab3/data
 */__pycache__
 CNN Project/img/*
 CNN Project/model/*
+BoW Project/data/*
