@@ -6,3 +6,5 @@ lab2/sample_data
 */.ipynb_checkpoints
 lab3/data
 *.avi
+CNN\ Project/model/*
+CNN\ Project/data
