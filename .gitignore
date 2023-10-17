@@ -1,9 +1,10 @@
 .DS_Store
 lab1/images
-*.pdf
 *.yaml
 lab2/sample_data
 */.ipynb_checkpoints
 lab3/data
 *.avi
 */__pycache__
+CNN Project/img/*
+CNN Project/model/*
