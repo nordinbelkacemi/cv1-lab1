@@ -170,7 +170,7 @@ def select_random_image_ids(labels, n):
 
 def get_vocab_subset_size(labels, vocab_subset_ratio):
     n_classes = np.unique(labels).shape[0]
-    return int(len(labels) * vocab_subset_ratio // n_classes)
+    return int((len(labels) * vocab_subset_ratio) // n_classes)
 
 
 @dataclass
