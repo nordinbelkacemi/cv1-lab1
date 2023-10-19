@@ -208,9 +208,14 @@ class Encoder:
         vocab_subset = data[selected_ids]
         _, subset_descriptors = extract_descriptors(vocab_subset)
 
+        # Remove images with empty descriptors
+        empty_descriptors_ids = [i for i, s in enumerate(subset_descriptors) if s is None]
+        selected_ids = np.delete(selected_ids, empty_descriptors_ids)
+        subset_descriptors = [s for s in subset_descriptors if s is not None]
+
         # Cluster descriptors
         kmeans = KMeans(n_clusters=self.vocab_size, random_state=42)
-        kmeans.fit(np.vstack(subset_descriptors))
+        kmeans.fit(np.concatenate(subset_descriptors))
 
         return kmeans, selected_ids, subset_descriptors
 
