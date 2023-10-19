@@ -7,3 +7,5 @@ lab2/sample_data
 *.avi
 CNN Project/img/*
 CNN Project/model/*
+CNN Project/convnet/*
+CNN Project/twolayer/*
