@@ -14,6 +14,7 @@ import cv2
 class Config:
     mode: str
     max_n_per_class: int
+    vocab_size: int
 
 if sys.version_info[0] == 2:
     import cPickle as pickle
@@ -160,7 +161,7 @@ def select_random_image_ids(labels, n):
         labels (np.array): 1D image labels array
         n (int): number of images per class
     Returns:
-        selected_ids (dict): a dictionary that maps class labels to the selected ids
+        selected_ids (dict): a dictionary that maps class labels to the selected ids (np.ndarray)
     """
     selected_ids = {}
     for img_class in np.unique(labels):
@@ -207,14 +208,9 @@ class Encoder:
         vocab_subset = data[selected_ids]
         _, subset_descriptors = extract_descriptors(vocab_subset)
 
-        # Remove images with empty descriptors
-        empty_descriptors_ids = [i for i, s in enumerate(subset_descriptors) if s is None]
-        selected_ids = np.delete(selected_ids, empty_descriptors_ids)
-        subset_descriptors = [s for s in subset_descriptors if s is not None]
-
         # Cluster descriptors
         kmeans = KMeans(n_clusters=self.vocab_size, random_state=42)
-        kmeans.fit(np.concatenate(subset_descriptors))
+        kmeans.fit(np.vstack(subset_descriptors))
 
         return kmeans, selected_ids, subset_descriptors
 
@@ -240,7 +236,7 @@ class Encoder:
         for idx, descriptors in enumerate(data_descriptors):
             if descriptors is not None:
                 visual_words = self.kmeans.predict(descriptors)
-                histogram = np.histogram(visual_words, bins=np.arange(self.vocab_size + 1))[0]
+                histogram = np.histogram(visual_words, bins=np.arange(self.vocab_size + 1), density=True)[0]
                 idx_to_encoding[idx] = Encoding(visual_words, histogram)
             else:
                 idx_to_encoding[idx] = Encoding([], np.zeros(self.vocab_size))
