@@ -6,15 +6,20 @@ import os
 import sys
 from torchvision import transforms
 import torchvision
-from dataclasses import dataclass
+from dataclasses import dataclass, InitVar
 from sklearn.cluster import KMeans
 import cv2
+from typing import Callable, List
+from skimage.feature import hog
 
 @dataclass
 class Config:
     mode: str
-    max_n_per_class: int
     vocab_size: int
+
+    def __post_init__(self):
+        if self.mode not in ["sift", "hog"]:
+            raise ValueError("Mode must be 'sift' or 'hog'")
 
 if sys.version_info[0] == 2:
     import cPickle as pickle
@@ -116,43 +121,25 @@ class CIFAR10(torchvision.datasets.CIFAR10):
         if self.mode == "sift":
             return cv2.xfeatures2d.SIFT_create().detectAndCompute(img, None)[1] is None
         if self.mode == "hog":
-            raise NotImplementedError()
-        else:
-            raise ValueError("mode is either sift or hog")
+            return False
 
 
-def filter_empty_desc_data(dataset, mode):
-    """
-    Filters out images with empty descriptors
-    Args:
-        dataset (list): dataset of images
-        mode (str): sift or hog
-    Returns:
-        np.ndarray: mask whose i-th element is False if the i-th image has empty descriptors (True otherwise)
-    """
-    if mode == "sift":
-        sift = cv2.xfeatures2d.SIFT_create()
-        return np.array([
-            sift.detectAndCompute(img, None)[1] is not None
-            for img in dataset
-        ])
-    if mode == "hog":
-        raise NotImplementedError()
-    else:
-        raise ValueError("mode is either sift or hog")
+def extract_keypoints_and_descriptors_sift(img):
+    return cv2.xfeatures2d.SIFT_create().detectAndCompute(img, None)
 
 
-def extract_descriptors(data):
-    # TODO: call differs based on the opencv version
-    sift = cv2.xfeatures2d.SIFT_create()
-    all_keypoints, all_descriptors = [], []
-    # Extract SIFT descriptors
-    for img in data:
-        # Detect key points and compute descriptors
-        keypoints, descriptors = sift.detectAndCompute(img, None)
-        all_keypoints.append(keypoints)
-        all_descriptors.append(descriptors)
-    return all_keypoints, all_descriptors
+def extract_descriptors_sift(img):
+    return cv2.xfeatures2d.SIFT_create().detectAndCompute(img, None)[1]
+
+
+def extract_descriptors_hog(img):
+    histograms = hog(img, feature_vector=False)
+    n_blocks_row, n_blocks_col, n_cells_row, n_cells_col, n_orient = histograms.shape
+    return histograms.reshape(n_blocks_row * n_blocks_col, n_cells_row * n_cells_col * n_orient)
+
+
+def extract_descriptors(imgs, extractor_fn):
+    return [extractor_fn(img) for img in imgs]
 
 
 def select_random_image_ids(labels, n):
@@ -176,15 +163,20 @@ def get_vocab_subset_size(labels, vocab_subset_ratio):
 
 @dataclass
 class Encoding:
-    visual_words: np.ndarray    # (vocab_size,) i-th element is the cluster (int) that the i-th descriptor belongs to
+    visual_words: np.ndarray    # (num_descriptors,) i-th element is the cluster (int) that the i-th descriptor belongs to
     histogram: np.ndarray       # (vocab_size,) normalized histogram
 
 
 class Encoder:
-    def __init__(self, training_data, training_labels, vocab_subset_ratio, vocab_size) -> None:
+    def __init__(self, training_data, training_labels, vocab_subset_ratio, vocab_size, mode) -> None:
         self.vocab_subset_ratio = vocab_subset_ratio
         self.vocab_size = vocab_size
-        self.kmeans, self.vocab_subset_ids, self.vocab_subset_descriptors = self._build_visual_vocab(
+        self.extractor_fn = {"sift": extract_descriptors_sift, "hog": extract_descriptors_hog}[mode]
+        (
+            self.kmeans,
+            self.vocab_subset_ids,
+            self.vocab_subset_descriptors
+        ) = self._build_visual_vocab(
             training_data,
             training_labels,
         )
@@ -206,7 +198,7 @@ class Encoder:
         selected_class_ids = select_random_image_ids(labels, n_imgs_per_class)
         selected_ids = np.array([v for v in selected_class_ids.values()]).flatten()
         vocab_subset = data[selected_ids]
-        _, subset_descriptors = extract_descriptors(vocab_subset)
+        subset_descriptors = extract_descriptors(vocab_subset, self.extractor_fn)
 
         # Remove images with empty descriptors
         empty_descriptors_ids = [i for i, s in enumerate(subset_descriptors) if s is None]
@@ -215,7 +207,7 @@ class Encoder:
 
         # Cluster descriptors
         kmeans = KMeans(n_clusters=self.vocab_size, random_state=42)
-        kmeans.fit(np.concatenate(subset_descriptors))
+        kmeans.fit(np.vstack(subset_descriptors))
 
         return kmeans, selected_ids, subset_descriptors
 
@@ -235,7 +227,7 @@ class Encoder:
                 occurrences of each visual word for a given image)
         """
         # Extract descriptors and keypoints from the whole dataset
-        _, data_descriptors = extract_descriptors(data)
+        data_descriptors = extract_descriptors(data, self.extractor_fn)
 
         idx_to_encoding = {}
         for idx, descriptors in enumerate(data_descriptors):
@@ -247,6 +239,58 @@ class Encoder:
                 idx_to_encoding[idx] = Encoding([], np.zeros(self.vocab_size))
 
         return idx_to_encoding
+
+
+def f(i, sorted_gts):
+    """
+    Args:
+        i (int): index (1-based, meaning that i=1 refers to the 1st element instead of i=0)
+        sorted_gts (np.ndarray): ground truths sorted based on prediction scores
+
+    Returns:
+        int: number of 1s in the first i elements of sorted_gts
+    """
+    if sorted_gts[i - 1] == 1:  # i is 1-based
+        return np.sum(sorted_gts[:i])
+    else:
+        return 0
+
+
+def AP(preds, gts):
+    """Calculates AP given predictions and ground truths for N test samples.
+    Sorts predictions based on prediction score (which is the prediction value itself)
+    and uses this sorted order to sort ground truths. The given formula for calculating
+    AP is then applied.
+
+    Args:
+        preds (np.ndarray): predictions (1s and 0s) of shape (N,) 
+        gts (np.ndarray): ground truths (1s and 0s) of shape (N,)
+    Returns:
+        float: Average precision, as defined in the question.
+    """
+    sorted_gts = gts[np.argsort(preds)]
+    m_c = np.sum(gts)
+    return 1 / m_c * np.sum([f(i, sorted_gts) / i for i in range(1, len(gts) + 1)])
+
+
+def mAP(classification_results, labels):
+    """Computes mAP on N test samples.
+
+    Args:
+        classification_results (dict[int, np.ndarray]): Dict where a key is a class index
+            and the value is an array of predictions (1s and 0s) of shape (N,)
+        labels (np.ndarray): Test labels
+
+    Returns:
+        float: mAP, i.e. the mean of APs for each class
+    """
+    return np.mean([
+        AP(
+            preds=predictions,
+            gts=np.array(labels == class_id, dtype=np.int32)
+        )
+        for class_id, predictions in classification_results.items()
+    ])
 
 
 if __name__ == '__main__':
